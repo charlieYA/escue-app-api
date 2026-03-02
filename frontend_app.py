@@ -35,7 +35,10 @@ with tab_client:
                 if location:
                     target_lat = location.latitude
                     target_lng = location.longitude
-                    st.success(f"📍 已精確定位：{location.address}")
+                    # 把地址用逗號切開，反轉順序，再接起來不留空白
+                    address_parts = [part.strip() for part in location.address.split(',')]
+                    tw_address = "".join(reversed(address_parts))
+                    st.success(f"📍 已精確定位：{tw_address}")
 
                     # 立即在地圖上顯示座標
                     map_data = [{"lat": target_lat, "lon": target_lng}]
