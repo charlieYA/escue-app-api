@@ -1,12 +1,12 @@
 import streamlit as st
 import requests
-from geopy.geocoders import Nominatim
+from geopy.geocoders import ArcGIS
 
-# 🔗 連結你的雲端大腦 (記得確認這裡是你的 Render 網址！)
+# 🔗 連結你的雲端大腦 (請確認這裡是你的 Render 網址！)
 API_URL = "https://my-rescue-api-v1.onrender.com"
 
-# 1. 初始化地理編碼器 (這是我們的新裝備)
-geolocator = Nominatim(user_agent="e_rescue_pro_v1")
+# 1. 升級為商業級地理編碼器 (ArcGIS)，對台灣門牌號碼支援度極高！
+geolocator = ArcGIS()
 
 # --- 畫面外觀設定 ---
 st.set_page_config(page_title="E-Rescue 生活救援", page_icon="📱", layout="centered")
@@ -16,35 +16,33 @@ st.title("🚗 E-Rescue 全方位生活救援 APP")
 tab_client, tab_provider = st.tabs(["🙋‍♂️ 我是客戶 (叫修)", "🦸‍♂️ 我是師傅 (接單)"])
 
 # ==========================================
-# 分頁 1：客戶端畫面 (📍 地址搜尋升級版)
+# 分頁 1：客戶端畫面 (📍 ArcGIS 精準地址搜尋版)
 # ==========================================
 with tab_client:
     st.markdown("### 遇到困難了嗎？馬上呼叫專業師傅！")
 
-    # 📍 新增：地址輸入框
-    user_address = st.text_input("📍 請輸入您的救援地址或地標：", placeholder="例如：台中火車站 或 台北市信義路五段7號")
+    # 📍 地址輸入框
+    user_address = st.text_input("📍 請輸入您的救援地址或地標：", placeholder="例如：台中市北區五權路277號")
 
     # 初始化預設座標 (預設在台中市)
     target_lat, target_lng = 24.16, 120.68
 
     # 如果使用者有輸入地址，就開始執行搜尋！
     if user_address:
-        with st.spinner("正在精確定位中..."):
+        with st.spinner("正在使用商業級地圖引擎精確定位中..."):
             try:
                 location = geolocator.geocode(user_address)
                 if location:
                     target_lat = location.latitude
                     target_lng = location.longitude
-                    # 把地址用逗號切開，反轉順序，再接起來不留空白
-                    address_parts = [part.strip() for part in location.address.split(',')]
-                    tw_address = "".join(reversed(address_parts))
-                    st.success(f"📍 已精確定位：{tw_address}")
+                    # 直接印出 ArcGIS 找回來的乾淨地址
+                    st.success(f"📍 已精確定位：{location.address}")
 
-                    # 立即在地圖上顯示座標
+                    # 立即在地圖上顯示座標 (zoom=16 讓地圖更近)
                     map_data = [{"lat": target_lat, "lon": target_lng}]
-                    st.map(map_data, zoom=15)
+                    st.map(map_data, zoom=16)
                 else:
-                    st.warning("找不到這個地址，請嘗試輸入更完整的資訊喔！")
+                    st.warning("找不到這個地址，請嘗試確認門牌號碼或路名喔！")
             except Exception as e:
                 st.error(f"定位服務暫時無法連線：{e}")
 
@@ -106,9 +104,9 @@ with tab_provider:
                         st.markdown(f"**📝 狀況：** {task['description']}")
                         st.markdown(f"**🆔 訂單：** `{task['request_id'][:8]}...`")
 
-                        # 顯示客戶的地圖位置
+                        # 顯示客戶的地圖位置 (zoom=15)
                         map_data = [{"lat": task["req_lat"], "lon": task["req_lng"]}]
-                        st.map(map_data, zoom=14)
+                        st.map(map_data, zoom=15)
                         st.markdown("---")
 
                         if st.button(f"✅ 點我接單！", key=f"btn_{task['request_id']}"):
