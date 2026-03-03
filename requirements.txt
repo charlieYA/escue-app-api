@@ -5,3 +5,5 @@ requests
 geopy
 folium
 streamlit-folium
+passlib
+bcrypt

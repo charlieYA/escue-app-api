@@ -1,178 +1,184 @@
-import sqlite3
-import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
+import sqlite3
+from passlib.context import CryptContext
+from datetime import datetime
 import uuid
-from enum import Enum
 
-app = FastAPI(title="道路救援系統 - V4.0 專業資料庫版")
+app = FastAPI(title="E-Rescue API")
 
-# --- 0. 設定資料庫檔案 ---
-DB_FILE = "rescue_system.db"
-
-
-# --- 1. 資料模型與分類 ---
-class ServiceCategory(str, Enum):
-    towing = "機車拋錨"
-    plumbing = "水電問題"
-    gardening = "園藝問題"
-    locksmith = "開鎖服務"
-    other = "其他"
+# 🔐 密碼加密工具
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-class AssistanceRequest(BaseModel):
-    description: str
-    req_lng: float
-    req_lat: float
-    user_id: str
-    category: ServiceCategory
-    status: str = "searching"
-    request_id: Optional[str] = None
-    provider_id: Optional[str] = None
-
-
-# --- 2. 資料庫連線與初始化 ---
 def get_db():
-    """建立資料庫連線的小幫手"""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row  # 讓我們可以像字典一樣讀取資料
+    conn = sqlite3.connect("rescue.db", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-    """系統啟動時，檢查並建立資料表 (Table)"""
     conn = get_db()
-    # 建立一個名為 requests 的資料表，就像 Excel 的工作表一樣
-    conn.execute('''
+    cursor = conn.cursor()
+    # 訂單表
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS requests (
             request_id TEXT PRIMARY KEY,
-            description TEXT,
-            req_lng REAL,
-            req_lat REAL,
             user_id TEXT,
             category TEXT,
+            description TEXT,
+            req_lat REAL,
+            req_lng REAL,
             status TEXT,
             provider_id TEXT
+        )
+    ''')
+    # 🆕 新增：使用者會員表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password_hash TEXT,
+            role TEXT
+        )
+    ''')
+    # 🚨 新增：緊急廣播表 (AMBER Alert)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message TEXT,
+            is_active BOOLEAN,
+            created_at TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
 
-# 啟動時立刻執行資料庫初始化
 init_db()
-print(f"👉 專業資料庫已啟動：{os.path.abspath(DB_FILE)}")
+
+
+# --- Pydantic 格式模型 ---
+class UserRegister(BaseModel):
+    username: str
+    password: str
+    role: str = "client"  # client 或 provider
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class RescueRequest(BaseModel):
+    description: str
+    req_lat: float
+    req_lng: float
+    user_id: str
+    category: str
+
+
+class AlertCreate(BaseModel):
+    message: str
 
 
 # ==========================================
-# --- 3. User (求救者端) ---
+# 🔐 會員系統 API
 # ==========================================
-@app.post("/requests", tags=["User"])
-async def create_request(req: AssistanceRequest):
-    """使用者發送救援請求 (寫入資料庫)"""
-    new_id = str(uuid.uuid4())
+@app.post("/register")
+def register(user: UserRegister):
     conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ?", (user.username,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="此帳號已經有人使用囉！")
 
-    # 使用 SQL 的 INSERT 語法新增資料
-    conn.execute('''
-        INSERT INTO requests (request_id, description, req_lng, req_lat, user_id, category, status, provider_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-    new_id, req.description, req.req_lng, req.req_lat, req.user_id, req.category.value, req.status, req.provider_id))
-
+    hashed_password = pwd_context.hash(user.password)
+    cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                   (user.username, hashed_password, user.role))
     conn.commit()
     conn.close()
+    return {"message": "註冊成功！"}
 
-    return {"message": "請求已送出", "request_id": new_id, "category": req.category}
 
-
-# ==========================================
-# --- 4. Admin (上帝視角/管理端) ---
-# ==========================================
-@app.get("/admin/requests", tags=["Admin"])
-async def get_all_requests(
-        status: Optional[str] = Query(None, description="輸入 searching 或 completed 進行過濾")
-):
-    """查看所有救援單 (從資料庫查詢)"""
+@app.post("/login")
+def login(user: UserLogin):
     conn = get_db()
-    if status:
-        # 使用 SQL 的 WHERE 進行條件過濾
-        cursor = conn.execute("SELECT * FROM requests WHERE status = ?", (status,))
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ?", (user.username,))
+    db_user = cursor.fetchone()
+    conn.close()
+
+    if not db_user or not pwd_context.verify(user.password, db_user["password_hash"]):
+        raise HTTPException(status_code=400, detail="帳號或密碼錯誤！")
+
+    return {"username": db_user["username"], "role": db_user["role"]}
+
+
+# ==========================================
+# 🚨 緊急廣播 API (AMBER Alert)
+# ==========================================
+@app.post("/alert")
+def create_alert(alert: AlertCreate):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE alerts SET is_active = 0")  # 先關閉舊的警報
+    cursor.execute("INSERT INTO alerts (message, is_active, created_at) VALUES (?, 1, ?)",
+                   (alert.message, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    return {"message": "緊急廣播已發佈至所有用戶！"}
+
+
+@app.get("/alert/active")
+def get_active_alert():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT message FROM alerts WHERE is_active = 1 ORDER BY id DESC LIMIT 1")
+    alert = cursor.fetchone()
+    conn.close()
+    if alert:
+        return {"active": True, "message": alert["message"]}
+    return {"active": False, "message": ""}
+
+
+# ==========================================
+# 🚗 原本的任務系統 API
+# ==========================================
+@app.post("/requests")
+def create_request(req: RescueRequest):
+    req_id = str(uuid.uuid4())
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO requests (request_id, user_id, category, description, req_lat, req_lng, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending')
+    ''', (req_id, req.user_id, req.category, req.description, req.req_lat, req.req_lng))
+    conn.commit()
+    conn.close()
+    return {"request_id": req_id, "status": "pending"}
+
+
+@app.get("/provider/requests")
+def get_requests(category: Optional[str] = None):
+    conn = get_db()
+    cursor = conn.cursor()
+    if category:
+        cursor.execute("SELECT * FROM requests WHERE status = 'pending' AND category = ?", (category,))
     else:
-        cursor = conn.execute("SELECT * FROM requests")
-
-    rows = cursor.fetchall()
+        cursor.execute("SELECT * FROM requests WHERE status = 'pending'")
+    tasks = [dict(row) for row in cursor.fetchall()]
     conn.close()
+    return tasks
 
-    return [dict(row) for row in rows]
 
-
-@app.get("/admin/dashboard", tags=["Admin"])
-async def get_dashboard_stats():
-    """查看系統統計數據 (使用 SQL 快速計算)"""
+@app.put("/provider/requests/{request_id}/accept")
+def accept_request(request_id: str, provider_id: str):
     conn = get_db()
-
-    # SQL 的 COUNT 功能可以瞬間算出數量，不用一筆一筆數
-    total = conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
-    searching = conn.execute("SELECT COUNT(*) FROM requests WHERE status='searching'").fetchone()[0]
-    completed = conn.execute("SELECT COUNT(*) FROM requests WHERE status='completed'").fetchone()[0]
-
-    plumbing = conn.execute("SELECT COUNT(*) FROM requests WHERE category='水電問題'").fetchone()[0]
-    towing = conn.execute("SELECT COUNT(*) FROM requests WHERE category='機車拋錨'").fetchone()[0]
-
-    conn.close()
-
-    return {
-        "營運狀態": {"總訂單": total, "尋找中": searching, "已完成": completed},
-        "熱門服務": {"水電問題": plumbing, "機車拋錨": towing}
-    }
-
-
-# ==========================================
-# --- 5. Provider (司機/師傅端) ---
-# ==========================================
-@app.get("/provider/requests", tags=["Provider"])
-async def get_available_tasks(
-        category: ServiceCategory = Query(..., description="請選擇你的專業領域")
-):
-    """師傅專屬任務牆：只看符合自己專業且還在 searching 的單"""
-    conn = get_db()
-    # 雙重條件查詢：狀態是 searching 且 類別符合
-    cursor = conn.execute(
-        "SELECT * FROM requests WHERE status = 'searching' AND category = ?",
-        (category.value,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-
-@app.put("/provider/requests/{request_id}/accept", tags=["Provider"])
-async def accept_request(request_id: str, provider_id: str):
-    """師傅接單 (更新資料庫狀態)"""
-    target_id = request_id.strip()
-    conn = get_db()
-
-    # 1. 先查出這張單目前的狀態
-    req = conn.execute("SELECT status FROM requests WHERE request_id = ?", (target_id,)).fetchone()
-
-    if not req:
-        conn.close()
-        raise HTTPException(status_code=404, detail="找不到該請求 ID")
-
-    if req["status"] != "searching":
-        conn.close()
-        raise HTTPException(status_code=400, detail="手腳太慢啦！這張單已經被接走或取消了。")
-
-    # 2. 如果還是 searching，就使用 UPDATE 語法更新狀態和司機 ID
-    conn.execute('''
-        UPDATE requests 
-        SET status = 'on_the_way', provider_id = ? 
-        WHERE request_id = ?
-    ''', (provider_id, target_id))
-
+    cursor = conn.cursor()
+    cursor.execute("UPDATE requests SET status = 'accepted', provider_id = ? WHERE request_id = ?",
+                   (provider_id, request_id))
     conn.commit()
     conn.close()
-
-    return {"message": "接單成功！", "request_id": target_id}
+    return {"message": "接單成功"}
