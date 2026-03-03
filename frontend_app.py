@@ -64,7 +64,8 @@ with tab_client:
             st.success(f"✅ 已鎖定「地址搜尋」位置：緯度 {final_lat:.4f}, 經度 {final_lng:.4f}")
 
         with st.form("request_form"):
-            category = st.selectbox("1️⃣ 需要什麼服務？", ["機車拋錨", "水電問題", "園藝問題", "開鎖服務", "其他"])
+            category = st.selectbox("1️⃣ 需要什麼服務？",
+                                    ["機車拋錨", "水電問題", "園藝問題", "開鎖服務", "搬家服務", "失物協尋", "其他"])
             description = st.text_area("2️⃣ 請簡單描述狀況")
             submitted = st.form_submit_button("🚨 立即呼叫救援")
 
@@ -144,7 +145,7 @@ with tab_provider:
     st.markdown("### 📋 專屬任務牆")
     st.info("系統會自動幫您過濾出符合您專業，且尚未被接走的訂單。")
 
-    my_skill = st.selectbox("請選擇您的專業領域：", ["機車拋錨", "水電問題", "園藝問題", "開鎖服務", "其他"])
+    my_skill = st.selectbox("請選擇您的專業領域：", ["機車拋錨", "水電問題", "園藝問題", "開鎖服務","搬家服務", "失物協尋", "其他"])
     st.button("🔄 刷新任務牆")
 
     try:
