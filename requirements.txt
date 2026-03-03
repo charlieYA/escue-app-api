@@ -6,4 +6,4 @@ geopy
 folium
 streamlit-folium
 passlib
-bcrypt
+bcrypt==3.2.2
