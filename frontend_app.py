@@ -4,7 +4,6 @@ import folium
 from streamlit_folium import st_folium
 from geopy.geocoders import ArcGIS
 
-# 🔗 連結你的雲端大腦
 API_URL = "https://my-rescue-api-v1.onrender.com"
 geolocator = ArcGIS()
 
@@ -16,6 +15,9 @@ if "order_id" not in st.session_state:
     st.session_state.order_id = None
 if "order_status" not in st.session_state:
     st.session_state.order_status = "pending"
+# 💡 新增：記住訂單的分類，這樣才能正確去任務牆對答案！
+if "order_category" not in st.session_state:
+    st.session_state.order_category = None
 
 tab_client, tab_provider = st.tabs(["🙋‍♂️ 我是客戶 (叫修)", "🦸‍♂️ 我是師傅 (接單)"])
 
@@ -23,49 +25,44 @@ tab_client, tab_provider = st.tabs(["🙋‍♂️ 我是客戶 (叫修)", "🦸
 # 分頁 1：客戶端畫面 (搜尋 + 點擊 雙刀流)
 # ==========================================
 with tab_client:
-    # 🌟 情境 1：還沒有叫車，顯示「地圖與表單」
     if st.session_state.order_id is None:
         st.markdown("### 📍 步驟 1：鎖定您的救援位置")
 
-        # --- 完美融合：1. 先讓使用者可以打字搜尋 ---
         user_address = st.text_input("🔍 快速搜尋地址 (搜尋後會移動地圖)：", placeholder="例如：台中市北區五權路277號")
-
-        target_lat, target_lng = 24.16, 120.68  # 預設台中
+        target_lat, target_lng = 24.16, 120.68
 
         if user_address:
             with st.spinner("正在搜尋地址..."):
-                location = geolocator.geocode(user_address)
-                if location:
-                    target_lat = location.latitude
-                    target_lng = location.longitude
-                    st.success(f"📍 搜尋成功：{location.address}")
-                else:
-                    st.warning("找不到此地址，請嘗試直接點擊下方地圖。")
+                try:
+                    location = geolocator.geocode(user_address)
+                    if location:
+                        target_lat = location.latitude
+                        target_lng = location.longitude
+                        st.success(f"📍 搜尋成功：{location.address}")
+                    else:
+                        st.warning("找不到此地址，請嘗試直接點擊下方地圖。")
+                except:
+                    st.error("定位服務暫時無回應")
 
-        # --- 完美融合：2. 畫出地圖，讓使用者可以點擊微調 ---
         st.info("💡 您可以直接在地圖上「點擊」來精確指定您拋錨的路口！")
         m = folium.Map(location=[target_lat, target_lng], zoom_start=15)
 
-        # 在搜尋的地點先放一個藍色標記當參考
-        if user_address and location:
+        if user_address:
             folium.Marker([target_lat, target_lng], popup="搜尋中心", tooltip="搜尋中心").add_to(m)
 
-        m.add_child(folium.LatLngPopup())  # 開啟點擊獲取經緯度的功能
+        m.add_child(folium.LatLngPopup())
 
-        # 顯示地圖並捕捉點擊
         map_data = st_folium(m, height=350, width=700, key="interactive_map")
 
-        # 決定最終座標：優先使用「地圖點擊」的座標，沒有點擊才用「搜尋」的座標
         final_lat, final_lng = target_lat, target_lng
 
         if map_data and map_data.get("last_clicked"):
             final_lat = map_data["last_clicked"]["lat"]
             final_lng = map_data["last_clicked"]["lng"]
             st.success(f"✅ 已鎖定「地圖點擊」位置：緯度 {final_lat:.4f}, 經度 {final_lng:.4f}")
-        elif user_address and location:
+        elif user_address:
             st.success(f"✅ 已鎖定「地址搜尋」位置：緯度 {final_lat:.4f}, 經度 {final_lng:.4f}")
 
-        # --- 叫車表單 ---
         with st.form("request_form"):
             category = st.selectbox("1️⃣ 需要什麼服務？", ["機車拋錨", "水電問題", "園藝問題", "開鎖服務", "其他"])
             description = st.text_area("2️⃣ 請簡單描述狀況")
@@ -89,18 +86,18 @@ with tab_client:
                                 data = res.json()
                                 st.session_state.order_id = data.get("request_id")
                                 st.session_state.order_status = "pending"
+                                # 💡 記住這個分類！
+                                st.session_state.order_category = category
                                 st.rerun()
                             else:
                                 st.error("❌ 呼叫失敗！")
                         except Exception as e:
                             st.error(f"連線錯誤：{e}")
 
-    # 🌟 情境 2：已經叫車了，顯示「即時狀態追蹤畫面」
     else:
         st.markdown("### 🚁 救援小組派遣中...")
         st.write(f"**您的專屬訂單編號：** `{st.session_state.order_id[:8]}...`")
 
-        # 顯示不同的進度條與狀態
         if st.session_state.order_status == "pending":
             st.warning("⏳ 正在等待附近的專業師傅接單...")
             st.progress(30)
@@ -116,20 +113,20 @@ with tab_client:
             if st.button("🔄 檢查最新狀態"):
                 with st.spinner("連線大腦確認中..."):
                     try:
-                        # 💡 強固版檢查邏輯：去 API 問目前所有「還在等」的訂單
-                        check_res = requests.get(f"{API_URL}/provider/requests")
+                        # 💡 帶上 order_category 參數，API 就不會報錯了！
+                        check_res = requests.get(f"{API_URL}/provider/requests",
+                                                 params={"category": st.session_state.order_category})
                         if check_res.status_code == 200:
                             pending_tasks = check_res.json()
-                            # 把所有還沒被接走的訂單 ID 抓出來
                             pending_ids = [task["request_id"] for task in pending_tasks]
 
-                            # 如果我的訂單 ID 已經「不在」這個清單裡了，代表被師傅接走了！
                             if st.session_state.order_id not in pending_ids:
                                 st.session_state.order_status = "accepted"
-                                st.rerun()  # 立刻重新整理畫面放氣球！
+                                st.rerun()
                             else:
-                                # 用一個輕量的跳出提示，告訴客戶還沒人接單
                                 st.toast("👀 師傅還在路上，請再稍等一下喔！")
+                        else:
+                            st.error(f"API 回傳錯誤碼：{check_res.status_code}")
                     except Exception as e:
                         st.error(f"查詢失敗：{e}")
 
@@ -137,10 +134,11 @@ with tab_client:
             if st.button("❌ 完成救援 / 重新呼叫"):
                 st.session_state.order_id = None
                 st.session_state.order_status = "pending"
+                st.session_state.order_category = None
                 st.rerun()
 
 # ==========================================
-# 分頁 2：師傅端畫面
+# 分頁 2：師傅端畫面 (🗺️ 彩色地圖升級版)
 # ==========================================
 with tab_provider:
     st.markdown("### 📋 專屬任務牆")
@@ -165,8 +163,16 @@ with tab_provider:
                         st.markdown(f"**📝 狀況：** {task['description']}")
                         st.markdown(f"**🆔 訂單：** `{task['request_id'][:8]}...`")
 
-                        map_data = [{"lat": task["req_lat"], "lon": task["req_lng"]}]
-                        st.map(map_data, zoom=15)
+                        # 🗺️ 升級：改用 Folium 畫出彩色的專業地圖！
+                        m_provider = folium.Map(location=[task["req_lat"], task["req_lng"]], zoom_start=16)
+                        # 加一個大紅色的標記，讓師傅一眼看出地點
+                        folium.Marker(
+                            [task["req_lat"], task["req_lng"]],
+                            popup="救援地點",
+                            icon=folium.Icon(color="red", icon="info-sign")
+                        ).add_to(m_provider)
+
+                        st_folium(m_provider, height=250, width=700, key=f"map_provider_{task['request_id']}")
 
                         if st.button(f"✅ 點我接單！", key=f"btn_{task['request_id']}"):
                             accept_res = requests.put(
