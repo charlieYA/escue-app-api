@@ -50,13 +50,22 @@ with st.sidebar:
         if auth_mode == "註冊新帳號":
             role = st.selectbox("您的身分？", ["🙋‍♂️ 一般客戶 (需要救援)", "🦸‍♂️ 專業師傅 (提供救援)"])
             role_value = "client" if "客戶" in role else "provider"
-            if st.button("📝 立即註冊"):
+        if st.button("📝 立即註冊"):
+            try:
                 res = requests.post(f"{API_URL}/register",
                                     json={"username": username, "password": password, "role": role_value})
                 if res.status_code == 200:
                     st.success("註冊成功！請切換到「登入」進行登入。")
                 else:
-                    st.error(f"註冊失敗：{res.json().get('detail')}")
+                    # 🛡️ 防呆：如果大腦傳回來的不是 JSON，我們就優雅地攔截它
+                    try:
+                        error_msg = res.json().get('detail', '未知錯誤')
+                    except:
+                        error_msg = f"大腦無回應 (代碼: {res.status_code})。可能是大腦還在重新開機，請等 1 分鐘後再試！"
+                    st.error(f"註冊失敗：{error_msg}")
+            except Exception as e:
+                st.error(f"🚨 無法連線到大腦！請確認 Render 是否還在更新中。錯誤：{e}")
+
 
         else:
             if st.button("🚀 登入"):
