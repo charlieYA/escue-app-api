@@ -182,3 +182,31 @@ def accept_request(request_id: str, provider_id: str):
     conn.commit()
     conn.close()
     return {"message": "接單成功"}
+
+
+# ==========================================
+# 🏁 結案與歷史紀錄 API
+# ==========================================
+@app.put("/requests/{request_id}/complete")
+def complete_request(request_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE requests SET status = 'completed' WHERE request_id = ?", (request_id,))
+    conn.commit()
+    conn.close()
+    return {"message": "任務已結案"}
+
+
+@app.get("/users/{username}/history")
+def get_user_history(username: str, role: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    # 根據身分，撈出屬於他的所有訂單
+    if role == "client":
+        cursor.execute("SELECT * FROM requests WHERE user_id = ? ORDER BY rowid DESC", (username,))
+    else:
+        cursor.execute("SELECT * FROM requests WHERE provider_id = ? ORDER BY rowid DESC", (username,))
+
+    tasks = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return tasks
