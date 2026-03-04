@@ -7,6 +7,41 @@ from datetime import datetime
 import uuid
 
 app = FastAPI(title="E-Rescue API")
+from fastapi import WebSocket, WebSocketDisconnect
+
+# ==========================================
+# ⚡ WebSockets 即時通訊中心
+# ==========================================
+class ConnectionManager:
+    def __init__(self):
+        # 記住所有目前連線中的使用者 (手機/網頁)
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    # 廣播功能：一對多發送通知 (取代目前的 AMBER Alert 重新整理)
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
+# 建立一條讓未來 APP 連線的「神經通道」
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # 這裡保持連線，隨時聽取前端傳來的聲音
+            data = await websocket.receive_text()
+            print(f"收到來自 {client_id} 的訊息: {data}")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 # 🔐 密碼加密工具
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
