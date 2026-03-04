@@ -99,15 +99,16 @@ with st.sidebar:
 # ==========================================
 # 🚀 擋修機制：沒登入不准叫車
 # ==========================================
+
 if st.session_state.user is None:
     st.info("👈 請先在左側欄位登入或註冊，才能使用 E-Rescue 服務喔！")
 else:
-    # 🆕 新增的服務類別
     SERVICE_LIST = ["機車拋錨", "水電問題", "園藝問題", "開鎖服務", "📦 搬家服務", "🔎 失物協尋", "其他"]
 
-    tab_client, tab_provider = st.tabs(["🙋‍♂️ 我是客戶 (叫修)", "🦸‍♂️ 我是師傅 (接單)"])
+    # 🌟 升級：新增第三個分頁「我的紀錄」
+    tab_client, tab_provider, tab_history = st.tabs(["🙋‍♂️ 我是客戶 (叫修)", "🦸‍♂️ 我是師傅 (接單)", "📜 我的紀錄"])
 
-    # --- 客戶端畫面 ---
+    # --- 分頁 1：客戶端畫面 ---
     with tab_client:
         if st.session_state.order_id is None:
             user_address = st.text_input("🔍 快速搜尋地址：", placeholder="例如：台中市北區五權路277號")
@@ -138,7 +139,6 @@ else:
                 description = st.text_area("2️⃣ 請簡單描述狀況")
                 if st.form_submit_button("🚨 立即呼叫救援"):
                     if description:
-                        # 💡 這裡把 user_id 換成真正登入的帳號了！
                         payload = {"description": description, "req_lng": final_lng, "req_lat": final_lat,
                                    "user_id": st.session_state.user, "category": category}
                         res = requests.post(f"{API_URL}/requests", json=payload)
@@ -165,12 +165,13 @@ else:
                     if st.session_state.order_id not in [t["request_id"] for t in check_res.json()]:
                         st.session_state.order_status = "accepted"
                         st.rerun()
-            if col2.button("❌ 完成救援 / 重新呼叫"):
+                        # 💡 客戶可以隨時清除目前畫面，準備叫下一波救援
+            if col2.button("❌ 關閉此畫面 / 叫新救援"):
                 st.session_state.order_id = None
                 st.session_state.order_status = "pending"
                 st.rerun()
 
-    # --- 師傅端畫面 ---
+    # --- 分頁 2：師傅端畫面 ---
     with tab_provider:
         st.markdown("### 📋 專屬任務牆")
         my_skill = st.selectbox("請選擇您的專業領域：", SERVICE_LIST)
@@ -187,19 +188,55 @@ else:
                     for task in tasks:
                         with st.container():
                             st.markdown("---")
-                            # 💡 顯示是哪個會員發出的求救！
                             st.markdown(f"**👤 客戶：** `{task['user_id']}`")
                             st.markdown(f"**📝 狀況：** {task['description']}")
 
                             m_provider = folium.Map(location=[task["req_lat"], task["req_lng"]], zoom_start=16)
                             folium.Marker([task["req_lat"], task["req_lng"]],
                                           icon=folium.Icon(color="red", icon="info-sign")).add_to(m_provider)
-                            st_folium(m_provider, height=250, width=700, key=f"map_{task['request_id']}")
+                            st_folium(m_provider, height=250, width=700, key=f"map_prov_{task['request_id']}")
 
-                            if st.button(f"✅ 點我接單！", key=f"btn_{task['request_id']}"):
-                                # 💡 這裡把 provider_id 換成真正登入的帳號了！
+                            if st.button(f"✅ 點我接單！", key=f"btn_accept_{task['request_id']}"):
                                 requests.put(f"{API_URL}/provider/requests/{task['request_id']}/accept",
                                              params={"provider_id": st.session_state.user})
-                                st.success("🎉 接單成功！請重新整理任務牆。")
+                                st.success("🎉 接單成功！請盡速前往救援，完成後可至「我的紀錄」結案。")
         except:
             pass
+
+    # --- 分頁 3：📜 歷史紀錄與結案區 (全新功能！) ---
+    with tab_history:
+        st.markdown(f"### 📂 {st.session_state.user} 的專屬紀錄")
+        if st.button("🔄 刷新紀錄"):
+            pass  # 按下後會自動重跑下方的 API 請求
+
+        try:
+            history_res = requests.get(f"{API_URL}/users/{st.session_state.user}/history",
+                                       params={"role": st.session_state.role})
+            if history_res.status_code == 200:
+                history_tasks = history_res.json()
+
+                if not history_tasks:
+                    st.info("目前還沒有任何紀錄喔！")
+                else:
+                    for task in history_tasks:
+                        with st.expander(
+                                f"📦 [{task['status'].upper()}] {task['category']} - {task['description'][:10]}..."):
+                            st.write(f"**訂單編號：** `{task['request_id']}`")
+                            st.write(f"**詳細狀況：** {task['description']}")
+
+                            if st.session_state.role == "client":
+                                st.write(f"**負責師傅：** {task.get('provider_id', '尚未接單')}")
+                            else:
+                                st.write(f"**發案客戶：** {task['user_id']}")
+
+                            # 🏁 師傅專屬的結案按鈕
+                            if st.session_state.role == "provider" and task['status'] == 'accepted':
+                                if st.button("✅ 救援完成 (點擊結案)", key=f"btn_complete_{task['request_id']}"):
+                                    complete_res = requests.put(f"{API_URL}/requests/{task['request_id']}/complete")
+                                    if complete_res.status_code == 200:
+                                        st.success("任務圓滿達成！辛苦了！")
+                                        st.rerun()
+            else:
+                st.error("無法取得歷史紀錄。")
+        except Exception as e:
+            st.error(f"連線錯誤：{e}")
