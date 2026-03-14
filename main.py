@@ -5,9 +5,18 @@ import sqlite3
 from passlib.context import CryptContext
 from datetime import datetime
 import uuid
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="E-Rescue API")
 from fastapi import WebSocket, WebSocketDisconnect
+# 加入 CORS 跨來源放行機制
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允許所有網域連線 (開發測試階段先全開)
+    allow_credentials=True,
+    allow_methods=["*"],  # 允許 POST, GET 等所有方法
+    allow_headers=["*"],  # 允許所有標頭
+)
 
 # ==========================================
 # ⚡ WebSockets 即時通訊中心
